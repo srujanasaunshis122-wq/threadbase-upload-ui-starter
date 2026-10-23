@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import apiClient from "../services/apiClient.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -27,30 +27,131 @@ import apiClient from "../services/apiClient.js";
 const MAX_SIZE = 5 * 1024 * 1024;
 const ALLOWED = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 
+function validate(file) {
+  if (!ALLOWED.includes(file.type)) {
+    return "Only image files are allowed (JPEG, PNG, WebP, GIF)";
+  }
+  if (file.size > MAX_SIZE) {
+    return "File is too large (max 5MB)";
+  }
+  return null;
+}
+
 export default function AvatarUploader() {
   const [file, setFile] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [progress, setProgress] = useState(0);
+  const [error, setError] = useState(null);
+  const [isDragging, setIsDragging] = useState(false);
   const inputRef = useRef(null);
 
-  // Stub upload - replace with FormData + Axios onUploadProgress (Task 4).
+  useEffect(() => {
+    if (!preview) return;
+    return () => URL.revokeObjectURL(preview);
+  }, [preview]);
+
+  const handleFile = (selectedFile) => {
+    if (!selectedFile) return;
+
+    const validationError = validate(selectedFile);
+    if (validationError) {
+      setError(validationError);
+      setFile(null);
+      setPreview(null);
+      return;
+    }
+
+    setError(null);
+    setFile(selectedFile);
+    const url = URL.createObjectURL(selectedFile);
+    setPreview(url);
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const dropped = e.dataTransfer.files[0];
+    if (dropped) {
+      handleFile(dropped);
+    }
+  };
+
+  const handleFileChange = (e) => {
+    const selected = e.target.files[0];
+    if (selected) {
+      handleFile(selected);
+    }
+  };
+
   async function upload() {
     if (!file) return;
-    console.log("TODO: upload", file.name);
+
+    const validationError = validate(file);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+
+    setError(null);
+    setProgress(0);
+
+    const formData = new FormData();
+    formData.append("avatar", file);
+
+    try {
+      const res = await apiClient.post("/api/upload", formData, {
+        onUploadProgress: (event) => {
+          const percent = Math.round((event.loaded * 100) / event.total);
+          setProgress(percent);
+        },
+      });
+      return res.data.url;
+    } catch (err) {
+      setError(err.response?.data?.error || err.message || "Upload failed");
+    }
   }
 
   return (
     <div>
-      <div className="drop-zone" onClick={() => inputRef.current.click()}>
+      <div
+        className={isDragging ? "drop-zone dragging" : "drop-zone"}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        onClick={() => inputRef.current.click()}
+      >
+        {preview && <img src={preview} alt="preview" className="preview" />}
         <p>Drag an image here, or click to choose</p>
         <input
           ref={inputRef}
           type="file"
           accept="image/*"
           hidden
-          onChange={(e) => setFile(e.target.files[0])}
+          onChange={handleFileChange}
         />
       </div>
 
-      <button onClick={upload} disabled={!file}>Upload</button>
+      {error && <p className="error">{error}</p>}
+
+      {progress > 0 && (
+        <div className="bar">
+          <div className="fill" style={{ width: `${progress}%` }} />
+        </div>
+      )}
+
+      <button onClick={upload} disabled={!file}>
+        Upload
+      </button>
     </div>
   );
 }
